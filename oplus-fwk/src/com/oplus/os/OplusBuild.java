@@ -37,8 +37,12 @@ public class OplusBuild {
 
     public static class VERSION {
         public static final String RELEASE = "V12.1";
-        public static final int SDK_VERSION = getOplusOSVERSION();
-        public static final int SDK_SUB_VERSION = 19;
+        // Oplus apps gate features on these, so report the API level of the stock build the
+        // blobs come from. Devices without the props keep the old values.
+        public static final int SDK_VERSION =
+                SystemProperties.getInt("ro.build.version.oplus.api", getOplusOSVERSION());
+        public static final int SDK_SUB_VERSION =
+                SystemProperties.getInt("ro.build.version.oplus.sub_api", 19);
     }
 
     public static int getOplusOSVERSION() {
