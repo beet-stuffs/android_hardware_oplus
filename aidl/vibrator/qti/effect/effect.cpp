@@ -29,21 +29,51 @@
 
 #include "effect.h"
 
+#include <algorithm>
+#include <iterator>
+
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
 
+#define PRIMITIVE_ID_MASK 0x8000
+
+/*
+ * A device can replace the built-in tables by providing VibrationEffectOverride.h through the
+ * INCLUDE_DIR soong config. It defines `effects` (indexed by the effect id) and `primitives`
+ * (indexed by the CompositePrimitive id), both arrays of struct effect_stream. The tables are
+ * used as they are, the JSON effect library is not consulted.
+ */
+#if __has_include(<VibrationEffectOverride.h>)
+#define VIBRATION_EFFECT_OVERRIDE
+#include <VibrationEffectOverride.h>
+#else
 #include <VibrationEffectConfig.h>
 
 #include "VibrationEffectLoader.h"
+#endif
 
 namespace {
+#ifndef VIBRATION_EFFECT_OVERRIDE
 VibrationEffectLoader loader;
+#endif
+
+const struct effect_stream* findStream(const struct effect_stream* begin,
+                                       const struct effect_stream* end, uint32_t effect_id) {
+    auto it = std::find_if(begin, end, [&](auto&& v) { return v.effect_id == effect_id; });
+    return it != end ? &*it : nullptr;
+}
 };  // anonymous namespace
 
 const struct effect_stream* get_effect_stream(uint32_t effect_id) {
+#ifdef VIBRATION_EFFECT_OVERRIDE
+    if (effect_id & PRIMITIVE_ID_MASK) {
+        return findStream(std::begin(primitives), std::end(primitives),
+                          effect_id & ~PRIMITIVE_ID_MASK);
+    }
+    return findStream(std::begin(effects), std::end(effects), effect_id);
+#else
     auto ret = loader.getEffectStream(effect_id);
     if (ret) return ret;
 
-    auto it = std::find_if(std::begin(effects), std::end(effects),
-                           [&](auto&& v) { return v.effect_id == effect_id; });
-    return it != std::end(effects) ? &*it : nullptr;
+    return findStream(std::begin(effects), std::end(effects), effect_id);
+#endif
 }

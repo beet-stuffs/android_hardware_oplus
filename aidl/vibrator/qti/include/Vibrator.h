@@ -59,7 +59,7 @@ class InputFFDevice {
     bool mInExternalControl;
 
   private:
-    int play(int effectId, uint32_t timeoutMs, long* playLengthMs);
+    int play(int effectId, uint32_t timeoutMs, long* playLengthMs, int16_t magnitude);
     int mVibraFd;
     int16_t mCurrAppId;
     int16_t mCurrMagnitude;

@@ -88,6 +88,17 @@ namespace vibrator {
 #define LED_DEVICE "/sys/class/leds/vibrator"
 #define HAPTICS_SYSFS "/sys/class/qcom-haptics"
 
+#ifdef MAGNITUDE_FLOOR
+/*
+ * Maps [0.0, 1.0] onto the magnitudes of the LIGHT and STRONG effect strengths, so that the low
+ * end can still be felt.
+ */
+static int16_t scaleToMagnitude(float scale) {
+    scale = std::clamp(scale, 0.0f, 1.0f);
+    return LIGHT_MAGNITUDE + static_cast<int16_t>(scale * (STRONG_MAGNITUDE - LIGHT_MAGNITUDE));
+}
+#endif
+
 static constexpr int32_t ComposeDelayMaxMs = 1000;
 static constexpr int32_t ComposeSizeMax = 256;
 
@@ -221,7 +232,8 @@ bool InputFFDevice::isPresent() {
  *                    kernel driver, and the rest two parameters are used for returning
  *                    back the real playing length from kernel driver.
  */
-int InputFFDevice::play(int effectId, uint32_t timeoutMs, long* playLengthMs) {
+int InputFFDevice::play(int effectId, uint32_t timeoutMs, long* playLengthMs,
+                        int16_t magnitude) {
     struct ff_effect effect;
     struct input_event play;
     int16_t data[CUSTOM_DATA_LEN] = {0, 0, 0};
@@ -253,7 +265,7 @@ int InputFFDevice::play(int effectId, uint32_t timeoutMs, long* playLengthMs) {
             data[0] = effectId;
             effect.type = FF_PERIODIC;
             effect.u.periodic.waveform = FF_CUSTOM;
-            effect.u.periodic.magnitude = mCurrMagnitude;
+            effect.u.periodic.magnitude = magnitude;
             effect.u.periodic.custom_data = data;
             effect.u.periodic.custom_len = sizeof(int16_t) * CUSTOM_DATA_LEN;
 #ifdef USE_EFFECT_STREAM
@@ -265,7 +277,7 @@ int InputFFDevice::play(int effectId, uint32_t timeoutMs, long* playLengthMs) {
 #endif
         } else {
             effect.type = FF_CONSTANT;
-            effect.u.constant.level = mCurrMagnitude;
+            effect.u.constant.level = magnitude;
             effect.replay.length = timeoutMs;
         }
 
@@ -315,11 +327,15 @@ errout:
 }
 
 int InputFFDevice::on(int32_t timeoutMs) {
-    return play(INVALID_VALUE, timeoutMs, NULL);
+    return play(INVALID_VALUE, timeoutMs, NULL, mCurrMagnitude);
 }
 
 int InputFFDevice::off() {
-    return play(INVALID_VALUE, 0, NULL);
+#ifdef MAGNITUDE_FLOOR
+    // An amplitude only lasts until the vibration it was set for is turned off.
+    mCurrMagnitude = STRONG_MAGNITUDE;
+#endif
+    return play(INVALID_VALUE, 0, NULL, mCurrMagnitude);
 }
 
 int InputFFDevice::setAmplitude(uint8_t amplitude) {
@@ -330,7 +346,11 @@ int InputFFDevice::setAmplitude(uint8_t amplitude) {
     /* For QMAA compliance, return OK even if vibrator device doesn't exist */
     if (!isPresent()) return 0;
 
+#ifdef MAGNITUDE_FLOOR
+    tmp = scaleToMagnitude(amplitude / 255.0f);
+#else
     tmp = amplitude * STRONG_MAGNITUDE / 255;
+#endif
     ie.type = EV_FF;
     ie.code = FF_GAIN;
     ie.value = tmp;
@@ -351,25 +371,30 @@ int InputFFDevice::playEffect(int effectId, EffectStrength es, long* playLengthM
         return -1;
     }
 
+    int16_t magnitude;
+
     switch (es) {
         case EffectStrength::LIGHT:
-            mCurrMagnitude = LIGHT_MAGNITUDE;
+            magnitude = LIGHT_MAGNITUDE;
             break;
         case EffectStrength::MEDIUM:
-            mCurrMagnitude = MEDIUM_MAGNITUDE;
+            magnitude = MEDIUM_MAGNITUDE;
             break;
         case EffectStrength::STRONG:
-            mCurrMagnitude = STRONG_MAGNITUDE;
+            magnitude = STRONG_MAGNITUDE;
             break;
         default:
             return -1;
     }
 
-    return play(effectId, INVALID_VALUE, playLengthMs);
+#ifndef MAGNITUDE_FLOOR
+    mCurrMagnitude = magnitude;
+#endif
+    return play(effectId, INVALID_VALUE, playLengthMs, magnitude);
 }
 
 int InputFFDevice::playPrimitive(int primitiveId, float amplitude, long* playLengthMs) {
-    int32_t tmp;
+    int16_t magnitude;
     int ret = 0;
 
     if (primitiveId > MAX_PATTERN_ID) {
@@ -378,10 +403,14 @@ int InputFFDevice::playPrimitive(int primitiveId, float amplitude, long* playLen
     }
 
     primitiveId |= PRIMITIVE_ID_MASK;
-    tmp = (uint8_t)(amplitude * 0xff) * STRONG_MAGNITUDE / 255;
-    mCurrMagnitude = tmp;
+#ifdef MAGNITUDE_FLOOR
+    magnitude = scaleToMagnitude(amplitude);
+#else
+    magnitude = (uint8_t)(amplitude * 0xff) * STRONG_MAGNITUDE / 255;
+    mCurrMagnitude = magnitude;
+#endif
 
-    ret = play(primitiveId, INVALID_VALUE, playLengthMs);
+    ret = play(primitiveId, INVALID_VALUE, playLengthMs, magnitude);
     if (ret != 0) ALOGE("Failed to play primitive %d", primitiveId);
 
     return ret;
@@ -744,6 +773,11 @@ static ndk::ScopedAStatus performAwinicLed(LedVibratorDevice& ledVib, Effect eff
  * effect stream tables carry unrelated waveforms past that.
  */
 static bool isEffectSupported(Effect effect) {
+#if defined(SUPPORT_TEXTURE_TICK) && defined(USE_EFFECT_STREAM)
+    // Needs a device tuned effect table, id 21 of the stock library is not a texture tick.
+    if (effect == Effect::TEXTURE_TICK)
+        return get_effect_stream(static_cast<uint32_t>(effect)) != NULL;
+#endif
     if (effect < Effect::CLICK || effect > Effect::HEAVY_CLICK) return false;
 #ifdef USE_EFFECT_STREAM
     return get_effect_stream(static_cast<uint32_t>(effect)) != NULL;
@@ -806,6 +840,10 @@ ndk::ScopedAStatus Vibrator::getSupportedEffects(std::vector<Effect>* _aidl_retu
         if (isEffectSupported(static_cast<Effect>(effectId)))
             _aidl_return->push_back(static_cast<Effect>(effectId));
     }
+
+#if defined(SUPPORT_TEXTURE_TICK) && defined(USE_EFFECT_STREAM)
+    if (isEffectSupported(Effect::TEXTURE_TICK)) _aidl_return->push_back(Effect::TEXTURE_TICK);
+#endif
 
     return ndk::ScopedAStatus::ok();
 }

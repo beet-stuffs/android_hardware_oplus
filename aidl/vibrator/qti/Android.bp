@@ -7,6 +7,12 @@ cc_library_shared {
     cflags: Common_CFlags + select(soong_config_variable("OPLUS_LINEAGE_VIBRATOR_HAL", "USE_EFFECT_STREAM"), {
         true: ["-DUSE_EFFECT_STREAM"],
         default: [],
+    }) + select(soong_config_variable("OPLUS_LINEAGE_VIBRATOR_HAL", "MAGNITUDE_FLOOR"), {
+        true: ["-DMAGNITUDE_FLOOR"],
+        default: [],
+    }) + select(soong_config_variable("OPLUS_LINEAGE_VIBRATOR_HAL", "SUPPORT_TEXTURE_TICK"), {
+        true: ["-DSUPPORT_TEXTURE_TICK"],
+        default: [],
     }),
     srcs: [
         "Vibrator.cpp",
