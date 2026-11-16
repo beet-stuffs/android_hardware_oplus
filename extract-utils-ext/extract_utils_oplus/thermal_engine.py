@@ -39,6 +39,11 @@ MAX_THRESHOLDS = 12
 INT_MAX = 2**31 - 1
 NO_LIMIT = INT_MAX
 SAMPLING_MS = 1000
+# Lowest thermal_status_model threshold, in degrees C, that gets a level.
+MIN_TEMP = 35
+# thermal_cpulevel attribute used as the CPU limit, maxCpuFreq is the
+# sustained limit and boostCeiling the higher one allowed for boosts.
+CPU_LIMIT = 'maxCpuFreq'
 
 
 class StatusModel(NamedTuple):
@@ -190,7 +195,9 @@ def decrypt_control_config(data: bytes) -> bytes:
     )
 
 
-def read_control_config(control_config_path: str) -> ControlConfig:
+def read_control_config(
+    control_config_path: str, cpu_limit: str = CPU_LIMIT
+) -> ControlConfig:
     root = ET.parse(control_config_path).getroot()
     if root.tag != 'sys_thermal_control_list':
         raise ValueError(f'Failed to parse {control_config_path}')
@@ -206,7 +213,7 @@ def read_control_config(control_config_path: str) -> ControlConfig:
                 if c.get('name') == 'thermal_cpulevel':
                     freqs = [
                         parse_int(freq)
-                        for freq in (level.get('maxCpuFreq') or '').split(',')
+                        for freq in (level.get(cpu_limit) or '').split(',')
                     ]
                     clusters = max(clusters, len(freqs))
                     config.cpu_levels[index] = freqs
@@ -238,13 +245,15 @@ def read_control_config(control_config_path: str) -> ControlConfig:
     return config._replace(clusters=clusters)
 
 
-def build_levels(control: ControlConfig, model: StatusModel) -> list[Level]:
+def build_levels(
+    control: ControlConfig, model: StatusModel, min_temp: int = MIN_TEMP
+) -> list[Level]:
     levels: list[Level] = []
     cpu_limits = [NO_LIMIT] * control.clusters
     gpu_limit = NO_LIMIT
 
     for up, down, status in zip(model.up, model.down, model.status):
-        if up < 35 or status not in control.gears:
+        if up < min_temp or status not in control.gears:
             continue
 
         cpu_level, gpu_level = control.gears[status]
@@ -304,8 +313,9 @@ def read_thermal_inputs(
     horae_config_path: str,
     horae_target_config_path: str,
     project_name: str | None = None,
+    cpu_limit: str = CPU_LIMIT,
 ) -> tuple[ControlConfig, list[str], StatusModel]:
-    control = read_control_config(control_config_path)
+    control = read_control_config(control_config_path, cpu_limit)
     horae = read_horae_config(horae_target_config_path)
 
     project = select_project(horae, project_name)
@@ -333,15 +343,18 @@ def generate_thermal_engine_config(
     horae_config_path: str,
     horae_target_config_path: str,
     project_name: str | None = None,
+    min_temp: int = MIN_TEMP,
+    cpu_limit: str = CPU_LIMIT,
 ) -> str:
     control, sensors, model = read_thermal_inputs(
         control_config_path,
         horae_config_path,
         horae_target_config_path,
         project_name,
+        cpu_limit,
     )
 
-    levels = build_levels(control, model)
+    levels = build_levels(control, model, min_temp)
     if not levels:
         raise ValueError(f'No thermal levels in {control_config_path}')
 
@@ -434,6 +447,8 @@ def add_generated_thermal_engine_config(
     module: ExtractUtilsModule,
     project_name: str | None = None,
     horae_target_config: str = HORAE_TARGET_CONFIG,
+    min_temp: int = MIN_TEMP,
+    cpu_limit: str = CPU_LIMIT,
 ) -> GeneratedProprietaryFile:
     """
     Generate /vendor/etc/thermal-engine.conf out of the stock
@@ -447,7 +462,10 @@ def add_generated_thermal_engine_config(
     is decrypted by a blob fixup too. horae_target_config is the extracted
     destination path of the target Horae config and has to be extracted by
     the module beforehand. project_name selects its entry, the first one
-    with shell sensors is used if it's missing.
+    with shell sensors is used if it's missing. Thresholds below min_temp
+    (degrees C) get no level, so no limits are applied until the shell
+    temperature reaches it. cpu_limit selects the CPU limit attribute of the
+    thermal_cpulevel levels, maxCpuFreq (sustained) or boostCeiling.
     """
 
     def fix_file_list(file_list: FileList):
@@ -500,6 +518,8 @@ def add_generated_thermal_engine_config(
             find_extracted_file(module, HORAE_CONFIG),
             find_extracted_file(module, horae_target_config),
             project_name,
+            min_temp,
+            cpu_limit,
         ).strip()
 
         with open(file_path, 'w', encoding='utf-8') as f:
