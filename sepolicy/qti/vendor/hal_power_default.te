@@ -1,6 +1,12 @@
 allow hal_power_default vendor_latency_device:chr_file rw_file_perms;
 allow hal_power_default self:capability sys_nice;
 
+# ADPF: allow the power HAL to set scheduling attributes on hint session threads
+allow hal_power_default { appdomain surfaceflinger system_server }:process setsched;
+# App domains run with MLS categories (s0:cN,cM), the HAL runs at plain s0. The setsched
+# constraint is "l1 == l2 or t1 == mlstrustedsubject", so the allow rule alone is not enough.
+typeattribute hal_power_default mlstrustedsubject;
+
 hal_client_domain(hal_power_default, vendor_hal_oplus_charger)
 hal_client_domain(hal_power_default, vendor_hal_oplus_touch)
 
