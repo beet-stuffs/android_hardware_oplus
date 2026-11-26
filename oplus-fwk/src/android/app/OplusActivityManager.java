@@ -134,6 +134,14 @@ public class OplusActivityManager extends OplusBaseActivityManager implements IO
         return true;
     }
 
+    public boolean registerComplexSceneObserver(Bundle options, com.oplus.osense.complexscene.OplusComplexSceneObserver observer) throws RemoteException {
+        return false;
+    }
+
+    public boolean unregisterComplexSceneObserver(Bundle options, com.oplus.osense.complexscene.OplusComplexSceneObserver observer) throws RemoteException {
+        return false;
+    }
+
     public List<String> getTaskPkgList(int taskId) {
         return new ArrayList<>();
     }
