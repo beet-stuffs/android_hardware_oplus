@@ -41,6 +41,26 @@ public final class OplusAsyncAnimatorUtils {
         return true;
     }
 
+    public static boolean setRotation(View view, float value) {
+        view.setRotation(value);
+        return true;
+    }
+
+    public static boolean setRotationX(View view, float value) {
+        view.setRotationX(value);
+        return true;
+    }
+
+    public static boolean setRotationY(View view, float value) {
+        view.setRotationY(value);
+        return true;
+    }
+
+    public static boolean setTranslationZ(View view, float value) {
+        view.setTranslationZ(value);
+        return true;
+    }
+
     // The rounded outline is only a visual refinement, report it as not handled.
     public static boolean setOutlineRoundRect(View view, Rect rect, float radius, float alpha) {
         return false;
